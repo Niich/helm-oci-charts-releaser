@@ -118,11 +118,11 @@ runs:
         export OCI_PASSWORD="${{ inputs.oci_password }}"
         "$GITHUB_ACTION_PATH/cr.sh" "${args[@]}"
 
-        if [[ -f changed_charts.txt ]]; then
-            cat changed_charts.txt >> "$GITHUB_OUTPUT"
+        if [[ -f released_charts.txt ]]; then
+            cat released_charts.txt >> "$GITHUB_OUTPUT"
         fi
         if [[ -f chart_version.txt ]]; then
             cat chart_version.txt >> "$GITHUB_OUTPUT"
         fi
-        rm -f changed_charts.txt chart_version.txt
+        rm -f released_charts.txt chart_version.txt
       shell: bash
