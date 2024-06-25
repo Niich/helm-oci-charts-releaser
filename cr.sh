@@ -41,6 +41,10 @@ Usage: $(basename "$0") <options>
         --skip-dependencies       Skip dependencies update from "Chart.yaml" to dir "charts/" before packaging (default: false)
         --skip-exisiting          Skip the chart push if the GithHub release exists
     -l, --mark-as-latest          Mark the created GitHub release as 'latest' (default: true)
+        --pages-branch            The repo pages branch
+        --packages-with-index     Upload chart packages directly into publishing branch
+    -c, --cr-version              The chart-releaser version to use (default: $DEFAULT_CHART_RELEASER_VERSION)"
+        --config                  The path to the chart-releaser config file
 EOF
 }
 
@@ -62,6 +66,9 @@ main() {
   local mark_as_latest=true
   local tag_name_pattern=
   local repo_root=
+  # cr index stuff
+  local packages_with_index=false
+  local pages_branch=
 
   parse_command_line "$@"
 
@@ -84,6 +91,16 @@ main() {
   readarray -t changed_charts <<<"$(lookup_changed_charts "$latest_tag")"
 
   if [[ -n "${changed_charts[*]}" ]]; then
+    # helm CR version
+    install_chart_releaser
+
+    rm -rf .cr-release-packages
+    mkdir -p .cr-release-packages
+
+    rm -rf .cr-index
+    mkdir -p .cr-index
+
+    # OCI version 
     install_helm
     helm_login
 
@@ -96,6 +113,7 @@ main() {
 
       package_chart "$chart"
       release_chart "$chart" "$name" "$version" "$desc"
+      update_index 
     done
 
     echo "released_charts=$(
@@ -134,6 +152,26 @@ parse_command_line() {
         shift
       else
         echo "ERROR: '-d|--charts-dir' cannot be empty." >&2
+        show_help
+        exit 1
+      fi
+      ;;
+    --config)
+      if [[ -n "${2:-}" ]]; then
+        config="$2"
+        shift
+      else
+        echo "ERROR: '--config' cannot be empty." >&2
+        show_help
+        exit 1
+      fi
+      ;;
+    -c | --cr-version)
+      if [[ -n "${2:-}" ]]; then
+        version="$2"
+        shift
+      else
+        echo "ERROR: '-c|--cr-version' cannot be empty." >&2
         show_help
         exit 1
       fi
@@ -191,6 +229,12 @@ parse_command_line() {
     -t | --tag-name-pattern)
       if [[ -n "${2:-}" ]]; then
         tag_name_pattern="$2"
+        shift
+      fi
+      ;;
+    --pages-branch)
+      if [[ -n "${2:-}" ]]; then
+        pages_branch="$2"
         shift
       fi
       ;;
@@ -369,6 +413,41 @@ helm_login() {
   oci_registry="${oci_registry#oci://}"
   oci_host="${oci_registry%%/*}"
   echo "$OCI_PASSWORD" | dry_run helm registry login -u "${oci_username}" --password-stdin "${oci_host}"
+}
+
+install_chart_releaser() {
+  if [[ ! -d "$RUNNER_TOOL_CACHE" ]]; then
+    echo "Cache directory '$RUNNER_TOOL_CACHE' does not exist" >&2
+    exit 1
+  fi
+
+  if [[ ! -d "$install_dir" ]]; then
+    mkdir -p "$install_dir"
+
+    echo "Installing chart-releaser on $install_dir..."
+    curl -sSLo cr.tar.gz "https://github.com/helm/chart-releaser/releases/download/$version/chart-releaser_${version#v}_linux_amd64.tar.gz"
+    tar -xzf cr.tar.gz -C "$install_dir"
+    rm -f cr.tar.gz
+  fi
+
+  echo 'Adding cr directory to PATH...'
+  export PATH="$install_dir:$PATH"
+}
+
+update_index() {
+  local args=(-o "$owner" -r "$repo" --push)
+  if [[ -n "$config" ]]; then
+    args+=(--config "$config")
+  fi
+  if [[ "$packages_with_index" = true ]]; then
+    args+=(--packages-with-index --index-path .)
+  fi
+  if [[ -n "$pages_branch" ]]; then
+    args+=(--pages-branch "$pages_branch")
+  fi
+
+  echo 'Updating charts repo index...'
+  cr index "${args[@]}"
 }
 
 main "$@"
